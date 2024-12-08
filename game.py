@@ -1,4 +1,6 @@
 import pygame
+import math
+from copy import deepcopy
 
 # Constants
 WIDTH, HEIGHT = 800, 800
@@ -72,9 +74,6 @@ class Board:
         self.create_board()
 
     def create_board(self):
-        """
-        Initialize the board with Triangle and Circle pieces.
-        """
         self.board[0][0] = TrianglePiece(0, 0)
         self.board[2][0] = TrianglePiece(2, 0)
         self.board[4][6] = TrianglePiece(4, 6)
@@ -99,9 +98,6 @@ class Board:
                     piece.draw(win)
 
     def draw_valid_moves(self, win, moves):
-        """
-        Highlight valid moves for the selected piece.
-        """
         for move in moves:
             row, col = move
             pygame.draw.circle(
@@ -117,27 +113,23 @@ class Board:
             self.board[piece.row][piece.col],
         )
         piece.move(row, col)
-
+        
     def remove(self, pieces):
         for piece in pieces:
             self.board[piece.row][piece.col] = 0
             if isinstance(piece, TrianglePiece):
                 self.triangle_left -= 1
             elif isinstance(piece, CirclePiece):
-                self.circle_left -= 1
+                self.circle_left -= 1    
 
     def get_valid_moves(self, piece):
-        """
-        Get all valid moves for a piece (horizontal and vertical only).
-        """
         moves = {}
         row, col = piece.row, piece.col
-        for drow, dcol in [(-1, 0), (1, 0), (0, -1), (0, 1)]:  # Horizontal and vertical
+        for drow, dcol in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
             new_row, new_col = row + drow, col + dcol
             if 0 <= new_row < ROWS and 0 <= new_col < COLS and self.board[new_row][new_col] == 0:
                 moves[(new_row, new_col)] = []
         return moves
-
 
     def check_and_capture(self):
         """
@@ -257,16 +249,77 @@ class Board:
                         self.circle_left -= 1
 
 
+# Minimax Algorithm
+def minimax(board, depth, maximizing_player, game):
+    if depth == 0 or board.triangle_left == 0 or board.circle_left == 0:
+        return board.triangle_left - board.circle_left, None
+
+    best_move = None
+    if maximizing_player:
+        max_eval = -math.inf
+        for piece, moves in get_all_moves(board, TrianglePiece, game):
+            for move in moves:
+                # Move'u tuple formatına zorla
+                if isinstance(move, int):
+                    move = (move, 0)  # Varsayılan bir sütun değeri ekle, gerekirse ayarla
+                elif not isinstance(move, tuple):
+                    print(f"Invalid move format in minimax. Expected tuple, got {type(move)}: {move}")
+                    continue
+
+                temp_board = deepcopy(board)
+                temp_board.move(piece, *move)
+                temp_board.check_and_capture()
+                eval, _ = minimax(temp_board, depth - 1, False, game)
+                if eval > max_eval:
+                    max_eval = eval
+                    best_move = (piece, move)
+        return max_eval, best_move
+    else:
+        min_eval = math.inf
+        for piece, moves in get_all_moves(board, CirclePiece, game):
+            for move in moves:
+                # Move'u tuple formatına zorla
+                if isinstance(move, int):
+                    move = (move, 0)  # Varsayılan bir sütun değeri ekle, gerekirse ayarla
+                elif not isinstance(move, tuple):
+                    print(f"Invalid move format in minimax. Expected tuple, got {type(move)}: {move}")
+                    continue
+
+                temp_board = deepcopy(board)
+                temp_board.move(piece, *move)
+                temp_board.check_and_capture()
+                eval, _ = minimax(temp_board, depth - 1, True, game)
+                if eval < min_eval:
+                    min_eval = eval
+                    best_move = (piece, move)
+        return min_eval, best_move
+
+
+
+def get_all_moves(board, piece_type, game):
+    all_moves = []
+    for row in range(ROWS):
+        for col in range(COLS):
+            piece = board.board[row][col]
+            if isinstance(piece, piece_type):
+                valid_moves = board.get_valid_moves(piece)
+                for move in valid_moves.keys():
+                    all_moves.append((piece, move))
+    return all_moves
+
+
 # Game Class
 class Game:
     def __init__(self, win):
         self.board = Board()
         self.win = win
+        self.turn = TrianglePiece
         self.selected = None
+        self.moves_left = 2  # AI için iki hamle hakkı
+        self.update()
         self.valid_moves = []
-        self.turn = TrianglePiece  # Triangle moves first
-        self.move_count = 0
-        self.first_piece = None
+        if self.turn == TrianglePiece:
+            self.ai_move()
 
     def update(self):
         self.board.draw(self.win)
@@ -294,6 +347,7 @@ class Game:
             self.selected = piece
             self.valid_moves = list(self.board.get_valid_moves(piece).keys())
 
+
     def _move(self, row, col):
         """
         Move the selected piece and handle turn logic.
@@ -320,18 +374,41 @@ class Game:
             return True
         return False
 
+
+    def ai_move(self):
+        if self.turn == TrianglePiece and self.moves_left > 0:
+            _, best_move = minimax(self.board, 2, True, self)
+            if best_move:
+                piece, move = best_move
+                self.board.move(piece, move[0], move[1])
+                self.board.check_and_capture()
+                self.update()  # Tahtayı her hamle sonrasında güncelle
+                self.moves_left -= 1  # Bir hamle yapıldı, kalan hamle sayısını azalt
+                pygame.time.delay(500)  # Hamleler arasında görsel bir gecikme ekle
+                if self.moves_left > 0:
+                    self.ai_move()  # AI ikinci hamlesini yapmalı
+                else:
+                    self.change_turn()  # Sıra insan oyuncuya geçer
+
+
+
+
     def change_turn(self):
-        self.turn = CirclePiece if self.turn == TrianglePiece else TrianglePiece
-        self.move_count = 0
-        self.first_piece = None
-        print(f"Turn changed. It's now {self.turn.__name__}'s turn.")
+        if self.turn == TrianglePiece and self.moves_left > 0:
+            self.moves_left -= 1  # AI'nin ikinci hamlesine izin ver
+            if self.moves_left == 0:
+                self.turn = CirclePiece
+                self.moves_left = 2  # İnsan sırasından sonra AI için sıfırla
+        elif self.turn == CirclePiece:
+            self.turn = TrianglePiece
+            self.moves_left = 2
 
 
 # Main Loop
 def main():
     pygame.init()
     win = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("Strategic Game")
+    pygame.display.set_caption("Strategic Game with AI")
     game = Game(win)
     clock = pygame.time.Clock()
 
